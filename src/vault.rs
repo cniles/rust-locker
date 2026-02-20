@@ -10,7 +10,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 pub struct Vault {
-    groups: HashMap<String, HashMap<String, String>>,
+    groups: HashMap<String, HashMap<String, Vec<String>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -111,7 +111,8 @@ impl SealedVault {
 
             let data = decrypt_slice(&self.encrypted_vault, &mut decryptor);
 
-            let groups = serde_cbor::from_slice::<HashMap<String, HashMap<String, String>>>(&data)?;
+            let groups =
+                serde_cbor::from_slice::<HashMap<String, HashMap<String, Vec<String>>>>(&data)?;
 
             Ok(Vault { groups })
         }
@@ -130,13 +131,16 @@ impl Vault {
             self.groups.insert(group_name.to_string(), HashMap::new());
         }
 
-        self.groups
-            .get_mut(group_name)
-            .unwrap()
-            .insert(key.to_string(), value.to_string());
+        let group = self.groups.get_mut(group_name).unwrap();
+
+        if group.contains_key(key) {
+            group.get_mut(key).unwrap().push(value.to_string());
+        } else {
+            group.insert(key.to_string(), vec![value.to_string()]);
+        }
     }
 
-    pub fn get(&self, group: &str) -> Option<&HashMap<String, String>> {
+    pub fn get(&self, group: &str) -> Option<&HashMap<String, Vec<String>>> {
         self.groups.get(group)
     }
 
@@ -213,7 +217,16 @@ mod test {
         assert!(!v.groups.contains_key("group"));
         v.add("group", "key", "value");
         assert!(v.groups.contains_key("group"));
-        assert_eq!(v.groups.get("group").unwrap().get("key").unwrap(), "value");
+        assert_eq!(
+            v.groups
+                .get("group")
+                .unwrap()
+                .get("key")
+                .unwrap()
+                .first()
+                .unwrap(),
+            "value"
+        );
     }
 
     #[test]
@@ -229,7 +242,7 @@ mod test {
 
         let v = sealed.unseal("mypassword").unwrap();
         assert_eq!(
-            v.get("foo").unwrap().get("bar"),
+            v.get("foo").unwrap().get("bar").unwrap().first(),
             Some("baz".to_string()).as_ref()
         );
     }

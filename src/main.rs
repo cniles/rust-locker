@@ -46,6 +46,7 @@ fn cli() -> clap::ArgMatches {
                 .about("get a secret")
                 .arg(arg!([group] "group of secret to get").required(true))
                 .arg(arg!([key] "key of the secret to get").required(true))
+                .arg(arg!([version] "version of the secret to get").value_parser(value_parser!(i32)).required(false))
         )
         .subcommand(
             Command::new("create")
@@ -221,9 +222,22 @@ fn main() {
             let key = matches
                 .get_one::<String>("key")
                 .expect("key arg must be supplied");
+
+            let version = matches.get_one::<i32>("version");
+
             if let Some(group) = vault.get(&group) {
-                if let Some(key) = group.get(key) {
-                    println!("{}", key);
+                if let Some(values) = group.get(key) {
+                    if let Some(version) = version {
+                        let version = if *version < 0 {
+                            (values.len() as i32) + *version - 1
+                        } else {
+                            *version
+                        } as usize;
+
+                        println!("{}", values[version]);
+                    } else {
+                        println!("{}", values.last().unwrap());
+                    }
                 }
             } else {
                 println!("group does not exist");
