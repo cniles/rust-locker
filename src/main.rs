@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
     env,
-    fs::{read, File},
+    fs::{create_dir_all, read, File},
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use clap::{arg, command, value_parser, Command};
@@ -13,12 +14,21 @@ mod prompt;
 mod vault;
 
 fn cli() -> clap::ArgMatches {
+    let mut default_vault_path = env::home_dir()
+        .or_else(|| Some(PathBuf::from_str(".").unwrap()))
+        .unwrap();
+
+    default_vault_path.push(".rust-locker");
+    default_vault_path.push("vault");
+
+    let default_vault_file_name = default_vault_path.into_os_string();
+
     command!()
         .arg(arg!(-p --password <STRING> "Optional password. Prefer to use environment variable or prompt"))
         .arg(
             arg!(-f --file <FILE> "Optional vault file name")
                 .required(false)
-                .default_value(".rustyvault")
+                .default_value(default_vault_file_name)
                 .value_parser(value_parser!(PathBuf)),
         )
         .subcommand_required(true)
@@ -228,6 +238,10 @@ fn main() {
 
             let sealed_vault: SealedVault =
                 v.seal(&password).expect("couldn't serialize sealed vault");
+
+            let prefix = vault_path.parent().unwrap();
+
+            create_dir_all(prefix).expect("could not create parent directory for vault file");
 
             let f = File::create_new(vault_path).expect("couldn't create file");
 
