@@ -111,8 +111,19 @@ impl SealedVault {
 
             let data = decrypt_slice(&self.encrypted_vault, &mut decryptor);
 
-            let groups =
-                serde_cbor::from_slice::<HashMap<String, HashMap<String, Vec<String>>>>(&data)?;
+            let groups = match serde_cbor::from_slice::<HashMap<String, HashMap<String, Vec<String>>>>(&data) {
+                Ok(groups) => groups,
+                Err(_) => {
+                    // Migrate old format where secrets were stored as a plain String rather than Vec<String>.
+                    let old = serde_cbor::from_slice::<HashMap<String, HashMap<String, String>>>(&data)
+                        .map_err(|_| "vault data is corrupt or in an unrecognized format")?;
+                    old.into_iter()
+                        .map(|(group, secrets)| {
+                            (group, secrets.into_iter().map(|(k, v)| (k, vec![v])).collect())
+                        })
+                        .collect()
+                }
+            };
 
             Ok(Vault { groups })
         }

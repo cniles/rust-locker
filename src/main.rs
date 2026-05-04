@@ -6,7 +6,7 @@ use std::{
     str::FromStr,
 };
 
-use clap::{arg, command, value_parser, Command};
+use clap::{arg, command, value_parser, Arg, Command};
 use prompt::Prompt;
 use vault::{SealedVault, Vault};
 
@@ -54,6 +54,54 @@ fn cli() -> clap::ArgMatches {
         )
         .subcommand(
             Command::new("password").about("change the vault password").arg(arg!([password]).required(false))
+        )
+        .subcommand(
+            Command::new("generate")
+                .about("generate a secret and print it to stdout")
+                .arg(
+                    Arg::new("length")
+                        .short('L')
+                        .value_name("N")
+                        .help("Length of secret (default: 12)")
+                        .num_args(1)
+                        .default_value("12")
+                        .value_parser(value_parser!(usize)),
+                )
+                .arg(
+                    Arg::new("uppercase")
+                        .short('u')
+                        .value_name("MIN")
+                        .help("Include uppercase letters with optional minimum count")
+                        .num_args(0..=1)
+                        .default_missing_value("1")
+                        .value_parser(value_parser!(usize)),
+                )
+                .arg(
+                    Arg::new("lowercase")
+                        .short('l')
+                        .value_name("MIN")
+                        .help("Include lowercase letters with optional minimum count")
+                        .num_args(0..=1)
+                        .default_missing_value("1")
+                        .value_parser(value_parser!(usize)),
+                )
+                .arg(
+                    Arg::new("digits")
+                        .short('d')
+                        .value_name("MIN")
+                        .help("Include digits with optional minimum count")
+                        .num_args(0..=1)
+                        .default_missing_value("1")
+                        .value_parser(value_parser!(usize)),
+                )
+                .arg(
+                    Arg::new("special")
+                        .short('s')
+                        .value_name("SPEC")
+                        .help("Include special chars; SPEC is optional charset then optional min (e.g. !@#2)")
+                        .num_args(0..=1)
+                        .default_missing_value(""),
+                ),
         )
         .get_matches()
 }
@@ -109,9 +157,92 @@ fn backup_and_seal(vault_path: &Path, backup_path: &Path, vault: Vault, password
         .expect("should be able to serialize sealed vault to file");
 }
 
+fn parse_special_spec(spec: &str) -> (String, usize) {
+    let trimmed = spec.trim_end_matches(|c: char| c.is_ascii_digit());
+    let digits = &spec[trimmed.len()..];
+    let min = if digits.is_empty() { 1 } else { digits.parse().unwrap_or(1) };
+    let charset = if trimmed.is_empty() {
+        "!@#$%^&*()-_=+".to_string()
+    } else {
+        trimmed.to_string()
+    };
+    (charset, min)
+}
+
+fn generate_secret(
+    length: usize,
+    uppercase: Option<usize>,
+    lowercase: Option<usize>,
+    digits: Option<usize>,
+    special: Option<(String, usize)>,
+) -> String {
+    use rand::rngs::OsRng;
+    use rand::seq::SliceRandom;
+
+    let upper_chars: Vec<char> = ('A'..='Z').collect();
+    let lower_chars: Vec<char> = ('a'..='z').collect();
+    let digit_chars: Vec<char> = ('0'..='9').collect();
+
+    let mut rng = OsRng;
+    let mut required: Vec<char> = Vec::new();
+    let mut pool: Vec<char> = Vec::new();
+
+    if let Some(min) = uppercase {
+        for _ in 0..min {
+            required.push(*upper_chars.choose(&mut rng).unwrap());
+        }
+        pool.extend_from_slice(&upper_chars);
+    }
+    if let Some(min) = lowercase {
+        for _ in 0..min {
+            required.push(*lower_chars.choose(&mut rng).unwrap());
+        }
+        pool.extend_from_slice(&lower_chars);
+    }
+    if let Some(min) = digits {
+        for _ in 0..min {
+            required.push(*digit_chars.choose(&mut rng).unwrap());
+        }
+        pool.extend_from_slice(&digit_chars);
+    }
+    if let Some((ref charset, min)) = special {
+        let special_chars: Vec<char> = charset.chars().collect();
+        for _ in 0..min {
+            required.push(*special_chars.choose(&mut rng).unwrap());
+        }
+        pool.extend_from_slice(&special_chars);
+    }
+
+    let effective_length = length.max(required.len());
+    let mut result = required;
+    for _ in 0..(effective_length - result.len()) {
+        result.push(*pool.choose(&mut rng).unwrap());
+    }
+
+    result.shuffle(&mut rng);
+    result.into_iter().collect()
+}
+
 fn main() {
     let mut prompt = Prompt::new();
     let matches = cli();
+
+    if let Some(gen_matches) = matches.subcommand_matches("generate") {
+        let length = *gen_matches.get_one::<usize>("length").unwrap_or(&12);
+        let uppercase = gen_matches.get_one::<usize>("uppercase").copied();
+        let lowercase = gen_matches.get_one::<usize>("lowercase").copied();
+        let digits = gen_matches.get_one::<usize>("digits").copied();
+        let special_spec = gen_matches.get_one::<String>("special");
+
+        let (uc, lc, dg, sp) = if uppercase.is_none() && lowercase.is_none() && digits.is_none() && special_spec.is_none() {
+            (Some(1usize), Some(1usize), Some(1usize), None)
+        } else {
+            (uppercase, lowercase, digits, special_spec.map(|s| parse_special_spec(s)))
+        };
+
+        println!("{}", generate_secret(length, uc, lc, dg, sp));
+        return;
+    }
 
     let vault_path_buf = matches
         .get_one::<PathBuf>("file")
